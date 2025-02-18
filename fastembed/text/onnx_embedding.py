@@ -1,193 +1,222 @@
-import os
-from multiprocessing import get_all_start_methods
-from typing import List, Dict, Any, Optional, Tuple, Union, Iterable, Type
+from typing import Any, Iterable, Optional, Sequence, Type, Union
 
 import numpy as np
-import onnxruntime as ort
-
-from fastembed.common.model_management import locate_model_file
-from fastembed.common.models import load_tokenizer, normalize
-from fastembed.common.utils import define_cache_dir, iter_batch
-from fastembed.parallel_processor import ParallelWorkerPool, Worker
+from fastembed.common.types import NumpyArray, OnnxProvider
+from fastembed.common.onnx_model import OnnxOutputContext
+from fastembed.common.utils import define_cache_dir, normalize
+from fastembed.text.onnx_text_model import OnnxTextModel, TextEmbeddingWorker
 from fastembed.text.text_embedding_base import TextEmbeddingBase
+from fastembed.common.model_description import DenseModelDescription, ModelSource
 
-supported_onnx_models = [
-    {
-        "model": "BAAI/bge-base-en",
-        "dim": 768,
-        "description": "Base English model",
-        "size_in_GB": 0.5,
-        "sources": {
-            "url": "https://storage.googleapis.com/qdrant-fastembed/fast-bge-base-en.tar.gz",
-        },
-    },
-    {
-        "model": "BAAI/bge-base-en-v1.5",
-        "dim": 768,
-        "description": "Base English model, v1.5",
-        "size_in_GB": 0.44,
-        "sources": {
-            "url": "https://storage.googleapis.com/qdrant-fastembed/fast-bge-base-en-v1.5.tar.gz",
-            "hf": "qdrant/bge-base-en-v1.5-onnx-q",
-        },
-    },
-    {
-        "model": "BAAI/bge-large-en-v1.5-quantized",
-        "dim": 1024,
-        "description": "Large English model, v1.5",
-        "size_in_GB": 1.34,
-        "sources": {
-            "hf": "qdrant/bge-large-en-v1.5-onnx-q",
-        },
-    },
-    {
-        "model": "BAAI/bge-large-en-v1.5",
-        "dim": 1024,
-        "description": "Large English model, v1.5",
-        "size_in_GB": 1.34,
-        "sources": {
-            "hf": "qdrant/bge-large-en-v1.5-onnx",
-        },
-    },
-    {
-        "model": "BAAI/bge-small-en",
-        "dim": 384,
-        "description": "Fast English model",
-        "size_in_GB": 0.2,
-        "sources": {
-            "url": "https://storage.googleapis.com/qdrant-fastembed/BAAI-bge-small-en.tar.gz",
-        },
-    },
-    # {
-    #     "model": "BAAI/bge-small-en",
-    #     "dim": 384,
-    #     "description": "Fast English model",
-    #     "size_in_GB": 0.2,
-    #     "hf_sources": [],
-    #     "compressed_url_sources": [
-    #         "https://storage.googleapis.com/qdrant-fastembed/fast-bge-small-en.tar.gz",
-    #         "https://storage.googleapis.com/qdrant-fastembed/BAAI-bge-small-en.tar.gz"
-    #     ]
-    # },
-    {
-        "model": "BAAI/bge-small-en-v1.5",
-        "dim": 384,
-        "description": "Fast and Default English model",
-        "size_in_GB": 0.13,
-        "sources": {
-            "url": "https://storage.googleapis.com/qdrant-fastembed/fast-bge-small-en-v1.5.tar.gz",
-            "hf": "qdrant/bge-small-en-v1.5-onnx-q",
-        },
-    },
-    {
-        "model": "BAAI/bge-small-zh-v1.5",
-        "dim": 512,
-        "description": "Fast and recommended Chinese model",
-        "size_in_GB": 0.1,
-        "sources": {
-            "url": "https://storage.googleapis.com/qdrant-fastembed/fast-bge-small-zh-v1.5.tar.gz",
-        },
-    },
-    {  # todo: it is not a flag embedding
-        "model": "sentence-transformers/all-MiniLM-L6-v2",
-        "dim": 384,
-        "description": "Sentence Transformer model, MiniLM-L6-v2",
-        "size_in_GB": 0.09,
-        "sources": {
-            "url": "https://storage.googleapis.com/qdrant-fastembed/sentence-transformers-all-MiniLM-L6-v2.tar.gz",
-            "hf": "qdrant/all-MiniLM-L6-v2-onnx",
-        },
-    },
-    {
-        "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-        "dim": 384,
-        "description": "Sentence Transformer model, paraphrase-multilingual-MiniLM-L12-v2",
-        "size_in_GB": 0.46,
-        "sources": {
-            "hf": "qdrant/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q",
-        },
-    },
-    {
-        "model": "nomic-ai/nomic-embed-text-v1",
-        "dim": 768,
-        "description": "8192 context length english model",
-        "size_in_GB": 0.54,
-        "sources": {
-            "hf": "nomic-ai/nomic-embed-text-v1",
-        },
-    },
-    {
-        "model": "nomic-ai/nomic-embed-text-v1.5",
-        "dim": 768,
-        "description": "8192 context length english model",
-        "size_in_GB": 0.54,
-        "sources": {
-            "hf": "nomic-ai/nomic-embed-text-v1.5",
-        },
-    },
-    {
-        "model": "thenlper/gte-large",
-        "dim": 1024,
-        "description": "Large general text embeddings model",
-        "size_in_GB": 1.34,
-        "sources": {
-            "hf": "qdrant/gte-large-onnx",
-        },
-    },
-    # {
-    #     "model": "sentence-transformers/all-MiniLM-L6-v2",
-    #     "dim": 384,
-    #     "description": "Sentence Transformer model, MiniLM-L6-v2",
-    #     "size_in_GB": 0.09,
-    #     "hf_sources": [
-    #         "qdrant/all-MiniLM-L6-v2-onnx"
-    #     ],
-    #     "compressed_url_sources": [
-    #         "https://storage.googleapis.com/qdrant-fastembed/fast-all-MiniLM-L6-v2.tar.gz",
-    #         "https://storage.googleapis.com/qdrant-fastembed/sentence-transformers-all-MiniLM-L6-v2.tar.gz"
-    #     ]
-    # }
+supported_onnx_models: list[DenseModelDescription] = [
+    DenseModelDescription(
+        model="BAAI/bge-base-en",
+        dim=768,
+        description=(
+            "Text embeddings, Unimodal (text), English, 512 input tokens truncation, "
+            "Prefixes for queries/documents: necessary, 2023 year."
+        ),
+        license="mit",
+        size_in_GB=0.42,
+        sources=ModelSource(
+            hf="Qdrant/fast-bge-base-en",
+            url="https://storage.googleapis.com/qdrant-fastembed/fast-bge-base-en.tar.gz",
+        ),
+        model_file="model_optimized.onnx",
+    ),
+    DenseModelDescription(
+        model="BAAI/bge-base-en-v1.5",
+        dim=768,
+        description=(
+            "Text embeddings, Unimodal (text), English, 512 input tokens truncation, "
+            "Prefixes for queries/documents: not so necessary, 2023 year."
+        ),
+        license="mit",
+        size_in_GB=0.21,
+        sources=ModelSource(
+            hf="qdrant/bge-base-en-v1.5-onnx-q",
+            url="https://storage.googleapis.com/qdrant-fastembed/fast-bge-base-en-v1.5.tar.gz",
+        ),
+        model_file="model_optimized.onnx",
+    ),
+    DenseModelDescription(
+        model="BAAI/bge-large-en-v1.5",
+        dim=1024,
+        description=(
+            "Text embeddings, Unimodal (text), English, 512 input tokens truncation, "
+            "Prefixes for queries/documents: not so necessary, 2023 year."
+        ),
+        license="mit",
+        size_in_GB=1.20,
+        sources=ModelSource(hf="qdrant/bge-large-en-v1.5-onnx"),
+        model_file="model.onnx",
+    ),
+    DenseModelDescription(
+        model="BAAI/bge-small-en",
+        dim=384,
+        description=(
+            "Text embeddings, Unimodal (text), English, 512 input tokens truncation, "
+            "Prefixes for queries/documents: necessary, 2023 year."
+        ),
+        license="mit",
+        size_in_GB=0.13,
+        sources=ModelSource(
+            hf="Qdrant/bge-small-en",
+            url="https://storage.googleapis.com/qdrant-fastembed/BAAI-bge-small-en.tar.gz",
+        ),
+        model_file="model_optimized.onnx",
+    ),
+    DenseModelDescription(
+        model="BAAI/bge-small-en-v1.5",
+        dim=384,
+        description=(
+            "Text embeddings, Unimodal (text), English, 512 input tokens truncation, "
+            "Prefixes for queries/documents: not so necessary, 2023 year."
+        ),
+        license="mit",
+        size_in_GB=0.067,
+        sources=ModelSource(hf="qdrant/bge-small-en-v1.5-onnx-q"),
+        model_file="model_optimized.onnx",
+    ),
+    DenseModelDescription(
+        model="BAAI/bge-small-zh-v1.5",
+        dim=512,
+        description=(
+            "Text embeddings, Unimodal (text), Chinese, 512 input tokens truncation, "
+            "Prefixes for queries/documents: not so necessary, 2023 year."
+        ),
+        license="mit",
+        size_in_GB=0.09,
+        sources=ModelSource(
+            hf="Qdrant/bge-small-zh-v1.5",
+            url="https://storage.googleapis.com/qdrant-fastembed/fast-bge-small-zh-v1.5.tar.gz",
+        ),
+        model_file="model_optimized.onnx",
+    ),
+    DenseModelDescription(
+        model="thenlper/gte-large",
+        dim=1024,
+        description=(
+            "Text embeddings, Unimodal (text), English, 512 input tokens truncation, "
+            "Prefixes for queries/documents: not necessary, 2023 year."
+        ),
+        license="mit",
+        size_in_GB=1.20,
+        sources=ModelSource(hf="qdrant/gte-large-onnx"),
+        model_file="model.onnx",
+    ),
+    DenseModelDescription(
+        model="mixedbread-ai/mxbai-embed-large-v1",
+        dim=1024,
+        description=(
+            "Text embeddings, Unimodal (text), English, 512 input tokens truncation, "
+            "Prefixes for queries/documents: necessary, 2024 year."
+        ),
+        license="apache-2.0",
+        size_in_GB=0.64,
+        sources=ModelSource(hf="mixedbread-ai/mxbai-embed-large-v1"),
+        model_file="onnx/model.onnx",
+    ),
+    DenseModelDescription(
+        model="snowflake/snowflake-arctic-embed-xs",
+        dim=384,
+        description=(
+            "Text embeddings, Unimodal (text), English, 512 input tokens truncation, "
+            "Prefixes for queries/documents: necessary, 2024 year."
+        ),
+        license="apache-2.0",
+        size_in_GB=0.09,
+        sources=ModelSource(hf="snowflake/snowflake-arctic-embed-xs"),
+        model_file="onnx/model.onnx",
+    ),
+    DenseModelDescription(
+        model="snowflake/snowflake-arctic-embed-s",
+        dim=384,
+        description=(
+            "Text embeddings, Unimodal (text), English, 512 input tokens truncation, "
+            "Prefixes for queries/documents: necessary, 2024 year."
+        ),
+        license="apache-2.0",
+        size_in_GB=0.13,
+        sources=ModelSource(hf="snowflake/snowflake-arctic-embed-s"),
+        model_file="onnx/model.onnx",
+    ),
+    DenseModelDescription(
+        model="snowflake/snowflake-arctic-embed-m",
+        dim=768,
+        description=(
+            "Text embeddings, Unimodal (text), English, 512 input tokens truncation, "
+            "Prefixes for queries/documents: necessary, 2024 year."
+        ),
+        license="apache-2.0",
+        size_in_GB=0.43,
+        sources=ModelSource(hf="Snowflake/snowflake-arctic-embed-m"),
+        model_file="onnx/model.onnx",
+    ),
+    DenseModelDescription(
+        model="snowflake/snowflake-arctic-embed-m-long",
+        dim=768,
+        description=(
+            "Text embeddings, Unimodal (text), English, 2048 input tokens truncation, "
+            "Prefixes for queries/documents: necessary, 2024 year."
+        ),
+        license="apache-2.0",
+        size_in_GB=0.54,
+        sources=ModelSource(hf="snowflake/snowflake-arctic-embed-m-long"),
+        model_file="onnx/model.onnx",
+    ),
+    DenseModelDescription(
+        model="snowflake/snowflake-arctic-embed-l",
+        dim=1024,
+        description=(
+            "Text embeddings, Unimodal (text), English, 512 input tokens truncation, "
+            "Prefixes for queries/documents: necessary, 2024 year."
+        ),
+        license="apache-2.0",
+        size_in_GB=1.02,
+        sources=ModelSource(hf="snowflake/snowflake-arctic-embed-l"),
+        model_file="onnx/model.onnx",
+    ),
+    DenseModelDescription(
+        model="jinaai/jina-clip-v1",
+        dim=768,
+        description=(
+            "Text embeddings, Multimodal (text&image), English, Prefixes for queries/documents: "
+            "not necessary, 2024 year"
+        ),
+        license="apache-2.0",
+        size_in_GB=0.55,
+        sources=ModelSource(hf="jinaai/jina-clip-v1"),
+        model_file="onnx/text_model.onnx",
+    ),
 ]
 
 
-class OnnxTextEmbedding(TextEmbeddingBase):
+class OnnxTextEmbedding(TextEmbeddingBase, OnnxTextModel[NumpyArray]):
     """Implementation of the Flag Embedding model."""
 
     @classmethod
-    def list_supported_models(cls) -> List[Dict[str, Any]]:
-        """Lists the supported models.
+    def _list_supported_models(cls) -> list[DenseModelDescription]:
+        """
+        Lists the supported models.
 
         Returns:
-            List[Dict[str, Any]]: A list of dictionaries containing the model information.
+            list[DenseModelDescription]: A list of DenseModelDescription objects containing the model information.
         """
         return supported_onnx_models
-
-    @classmethod
-    def _get_model_description(cls, model_name: str) -> Dict[str, Any]:
-        """
-        Gets the model description from the model_name.
-
-        Args:
-            model_name (str): The name of the model.
-
-        raises:
-            ValueError: If the model_name is not supported.
-
-        Returns:
-            Dict[str, Any]: The model description.
-        """
-        for model in cls.list_supported_models():
-            if model_name == model["model"]:
-                return model
-
-        raise ValueError(f"Model {model_name} is not supported in FlagEmbedding.")
 
     def __init__(
         self,
         model_name: str = "BAAI/bge-small-en-v1.5",
         cache_dir: Optional[str] = None,
         threads: Optional[int] = None,
-        **kwargs,
+        providers: Optional[Sequence[OnnxProvider]] = None,
+        cuda: bool = False,
+        device_ids: Optional[list[int]] = None,
+        lazy_load: bool = False,
+        device_id: Optional[int] = None,
+        specific_model_path: Optional[str] = None,
+        **kwargs: Any,
     ):
         """
         Args:
@@ -196,42 +225,54 @@ class OnnxTextEmbedding(TextEmbeddingBase):
                                        Can be set using the `FASTEMBED_CACHE_PATH` env variable.
                                        Defaults to `fastembed_cache` in the system's temp directory.
             threads (int, optional): The number of threads single onnxruntime session can use. Defaults to None.
+            providers (Optional[Sequence[OnnxProvider]], optional): The list of onnxruntime providers to use.
+                Mutually exclusive with the `cuda` and `device_ids` arguments. Defaults to None.
+            cuda (bool, optional): Whether to use cuda for inference. Mutually exclusive with `providers`
+                Defaults to False.
+            device_ids (Optional[list[int]], optional): The list of device ids to use for data parallel processing in
+                workers. Should be used with `cuda=True`, mutually exclusive with `providers`. Defaults to None.
+            lazy_load (bool, optional): Whether to load the model during class initialization or on demand.
+                Should be set to True when using multiple-gpu and parallel encoding. Defaults to False.
+            device_id (Optional[int], optional): The device id to use for loading the model in the worker process.
+            specific_model_path (Optional[str], optional): The specific path to the onnx model dir if it should be imported from somewhere else
 
         Raises:
             ValueError: If the model_name is not in the format <org>/<model> e.g. BAAI/bge-base-en.
         """
-
         super().__init__(model_name, cache_dir, threads, **kwargs)
+        self.providers = providers
+        self.lazy_load = lazy_load
 
-        self.model_name = model_name
-        self._model_description = self._get_model_description(model_name)
+        # List of device ids, that can be used for data parallel processing in workers
+        self.device_ids = device_ids
+        self.cuda = cuda
 
-        self._cache_dir = define_cache_dir(cache_dir)
-        self._model_dir = self.download_model(self._model_description, self._cache_dir)
-        self._max_length = 512
+        # This device_id will be used if we need to load model in current process
+        self.device_id: Optional[int] = None
+        if device_id is not None:
+            self.device_id = device_id
+        elif self.device_ids is not None:
+            self.device_id = self.device_ids[0]
 
-        model_path = locate_model_file(self._model_dir, ["model.onnx", "model_optimized.onnx"])
+        self.model_description = self._get_model_description(model_name)
+        self.cache_dir = str(define_cache_dir(cache_dir))
+        self._model_dir = self.download_model(
+            self.model_description,
+            self.cache_dir,
+            local_files_only=self._local_files_only,
+            specific_model_path=specific_model_path,
+        )
 
-        # List of Execution Providers: https://onnxruntime.ai/docs/execution-providers
-        onnx_providers = ["CPUExecutionProvider"]
-
-        so = ort.SessionOptions()
-        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-
-        if self.threads is not None:
-            so.intra_op_num_threads = self.threads
-            so.inter_op_num_threads = self.threads
-
-        self.tokenizer = load_tokenizer(model_dir=self._model_dir, max_length=self._max_length)
-        self.model = ort.InferenceSession(str(model_path), providers=onnx_providers, sess_options=so)
+        if not self.lazy_load:
+            self.load_onnx_model()
 
     def embed(
         self,
         documents: Union[str, Iterable[str]],
         batch_size: int = 256,
         parallel: Optional[int] = None,
-        **kwargs,
-    ) -> Iterable[np.ndarray]:
+        **kwargs: Any,
+    ) -> Iterable[NumpyArray]:
         """
         Encode a list of documents into list of embeddings.
         We use mean pooling with attention so that the model can handle variable-length inputs.
@@ -247,97 +288,61 @@ class OnnxTextEmbedding(TextEmbeddingBase):
         Returns:
             List of embeddings, one per document
         """
-        is_small = False
-
-        if isinstance(documents, str):
-            documents = [documents]
-            is_small = True
-
-        if isinstance(documents, list):
-            if len(documents) < batch_size:
-                is_small = True
-
-        if parallel == 0:
-            parallel = os.cpu_count()
-
-        if parallel is None or is_small:
-            for batch in iter_batch(documents, batch_size):
-                yield from self._post_process_onnx_output(self.onnx_embed(batch))
-        else:
-            start_method = "forkserver" if "forkserver" in get_all_start_methods() else "spawn"
-            params = {
-                "model_name": self.model_name,
-                "cache_dir": str(self._cache_dir),
-            }
-            pool = ParallelWorkerPool(parallel, self._get_worker_class(), start_method=start_method)
-            for batch in pool.ordered_map(iter_batch(documents, batch_size), **params):
-                yield from self._post_process_onnx_output(batch)
+        yield from self._embed_documents(
+            model_name=self.model_name,
+            cache_dir=str(self.cache_dir),
+            documents=documents,
+            batch_size=batch_size,
+            parallel=parallel,
+            providers=self.providers,
+            cuda=self.cuda,
+            device_ids=self.device_ids,
+            **kwargs,
+        )
 
     @classmethod
-    def _get_worker_class(cls) -> Type["EmbeddingWorker"]:
+    def _get_worker_class(cls) -> Type["TextEmbeddingWorker[NumpyArray]"]:
         return OnnxTextEmbeddingWorker
 
-    def _preprocess_onnx_input(self, onnx_input: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    def _preprocess_onnx_input(
+        self, onnx_input: dict[str, NumpyArray], **kwargs: Any
+    ) -> dict[str, NumpyArray]:
         """
         Preprocess the onnx input.
         """
         return onnx_input
 
-    @classmethod
-    def _post_process_onnx_output(cls, output: Tuple[np.ndarray, np.ndarray]):
-        embeddings, _ = output
-        return normalize(embeddings[:, 0]).astype(np.float32)
+    def _post_process_onnx_output(self, output: OnnxOutputContext) -> Iterable[NumpyArray]:
+        embeddings = output.model_output
+        if embeddings.ndim == 3:  # (batch_size, seq_len, embedding_dim)
+            processed_embeddings = embeddings[:, 0]
+        elif embeddings.ndim == 2:  # (batch_size, embedding_dim)
+            processed_embeddings = embeddings
+        else:
+            raise ValueError(f"Unsupported embedding shape: {embeddings.shape}")
+        return normalize(processed_embeddings).astype(np.float32)
 
-    def onnx_embed(self, documents: List[str]) -> Tuple[np.ndarray, np.ndarray]:
-        encoded = self.tokenizer.encode_batch(documents)
-        input_ids = np.array([e.ids for e in encoded])
-        attention_mask = np.array([e.attention_mask for e in encoded])
-
-        onnx_input = {
-            "input_ids": np.array(input_ids, dtype=np.int64),
-            "attention_mask": np.array(attention_mask, dtype=np.int64),
-            "token_type_ids": np.array([np.zeros(len(e), dtype=np.int64) for e in input_ids], dtype=np.int64),
-        }
-
-        onnx_input = self._preprocess_onnx_input(onnx_input)
-
-        model_output = self.model.run(None, onnx_input)
-        embeddings = model_output[0]
-        return embeddings, attention_mask
-
-
-class EmbeddingWorker(Worker):
-    def init_embedding(
-        self,
-        model_name: str,
-        cache_dir: str,
-    ) -> OnnxTextEmbedding:
-        raise NotImplementedError()
-
-    def __init__(
-        self,
-        model_name: str,
-        cache_dir: str,
-    ):
-        self.model = self.init_embedding(model_name, cache_dir)
-
-    @classmethod
-    def start(cls, model_name: str, cache_dir: str, **kwargs: Any) -> "EmbeddingWorker":
-        return cls(
-            model_name=model_name,
-            cache_dir=cache_dir,
+    def load_onnx_model(self) -> None:
+        self._load_onnx_model(
+            model_dir=self._model_dir,
+            model_file=self.model_description.model_file,
+            threads=self.threads,
+            providers=self.providers,
+            cuda=self.cuda,
+            device_id=self.device_id,
         )
 
-    def process(self, items: Iterable[Tuple[int, Any]]) -> Iterable[Tuple[int, Any]]:
-        for idx, batch in items:
-            embeddings, attn_mask = self.model.onnx_embed(batch)
-            yield idx, (embeddings, attn_mask)
 
-
-class OnnxTextEmbeddingWorker(EmbeddingWorker):
+class OnnxTextEmbeddingWorker(TextEmbeddingWorker[NumpyArray]):
     def init_embedding(
         self,
         model_name: str,
         cache_dir: str,
+        **kwargs: Any,
     ) -> OnnxTextEmbedding:
-        return OnnxTextEmbedding(model_name=model_name, cache_dir=cache_dir, threads=1)
+        return OnnxTextEmbedding(
+            model_name=model_name,
+            cache_dir=cache_dir,
+            threads=1,
+            **kwargs,
+        )

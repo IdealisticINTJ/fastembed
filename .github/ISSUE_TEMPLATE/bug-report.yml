@@ -1,0 +1,59 @@
+name: Bug
+description: File a bug report
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report!
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the error you encountered.
+      placeholder: <Description>
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What is the expected behaviour?
+      description: Describe the way you expected the code to behave.
+      placeholder: <Description>
+  - type: textarea
+    id: code-snippet
+    attributes:
+      label: A minimal reproducible example
+      description: It would really help us to fix the problem if you could provide a code snippet that reproduces the issue.
+      placeholder: <Code snippet>
+  - type: textarea
+    id: python-version
+    attributes:
+      label: What Python version are you on? e.g. python --version
+      description: Also tell us, what package manager are you using e.g. conda, pip, poetry?
+      placeholder: Python3.10
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: FastEmbed version
+      description: What version of FastEmbed are you running? python -c "import fastembed; print(fastembed.__version__)". If you're not on the latest, please upgrade and see if the problem persists.
+      placeholder: v0.5.1
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: What os are you seeing the problem on?
+      multiple: true
+      options:
+        - Linux
+        - MacOS
+        - Windows
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant stack traces and/or logs
+      description: Please copy and paste any relevant raised exceptions. This will be automatically formatted into code, so no need for backticks.
+      render: shell

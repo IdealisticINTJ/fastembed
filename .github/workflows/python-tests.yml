@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ master, main, gpu ]
   pull_request:
 
 env:
@@ -14,11 +14,11 @@ jobs:
     strategy:
       matrix:
         python-version:
-          - '3.8.x'
           - '3.9.x'
           - '3.10.x'
           - '3.11.x'
           - '3.12.x'
+          - '3.13.x'
         os:
           - ubuntu-latest
           - macos-latest
@@ -29,18 +29,17 @@ jobs:
     name: Python ${{ matrix.python-version }} on ${{ matrix.os }} test
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: |
           python -m pip install poetry
           poetry config virtualenvs.create false
-          poetry install --no-interaction --no-ansi
-      - name: Run tests
+          poetry install --no-interaction --no-ansi --without dev,docs
+
+      - name: Run pytest
         run: |
-          export IS_UBUNTU_CI=$(test "${{ matrix.os }}" = "ubuntu-latest" && echo "true" || echo "false")
-          pytest
-        shell: bash
+          poetry run pytest 

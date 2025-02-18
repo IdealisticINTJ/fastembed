@@ -9,7 +9,7 @@
 
 # %%
 import time
-from typing import Callable, List, Tuple
+from typing import Callable
 
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
@@ -23,7 +23,7 @@ from fastembed.embedding import DefaultEmbedding
 # data is a list of strings, each string is a document.
 
 # %%
-documents: List[str] = [
+documents: list[str] = [
     "Chandrayaan-3 is India's third lunar mission",
     "It aimed to land a rover on the Moon's surface - joining the US, China and Russia",
     "The mission is a follow-up to Chandrayaan-2, which had partial success",
@@ -56,8 +56,10 @@ class HF:
         self.model = AutoModel.from_pretrained(model_id)
         self.tokenizer = AutoTokenizer.from_pretrained(model_id)
 
-    def embed(self, texts: List[str]):
-        encoded_input = self.tokenizer(texts, max_length=512, padding=True, truncation=True, return_tensors="pt")
+    def embed(self, texts: list[str]):
+        encoded_input = self.tokenizer(
+            texts, max_length=512, padding=True, truncation=True, return_tensors="pt"
+        )
         model_output = self.model(**encoded_input)
         sentence_embeddings = model_output[0][:, 0]
         sentence_embeddings = F.normalize(sentence_embeddings)
@@ -84,7 +86,9 @@ embedding_model = DefaultEmbedding()
 
 
 # %%
-def calculate_time_stats(embed_func: Callable, documents: list, k: int) -> Tuple[float, float, float]:
+def calculate_time_stats(
+    embed_func: Callable, documents: list, k: int
+) -> tuple[float, float, float]:
     times = []
     for _ in range(k):
         # Timing the embed_func call
@@ -107,7 +111,9 @@ print(f"FastEmbed (Average, Max, Min): {fst_stats}")
 
 # %%
 def plot_character_per_second_comparison(
-    hf_stats: Tuple[float, float, float], fst_stats: Tuple[float, float, float], documents: list
+    hf_stats: tuple[float, float, float],
+    fst_stats: tuple[float, float, float],
+    documents: list,
 ):
     # Calculating total characters in documents
     total_characters = sum(len(doc) for doc in documents)

@@ -1,11 +1,28 @@
 import os
+import sys
+import re
 import tempfile
-from itertools import islice
+import unicodedata
 from pathlib import Path
-from typing import Union, Iterable, Generator, Optional
+from itertools import islice
+from typing import Iterable, Optional, TypeVar
+
+import numpy as np
+
+from fastembed.common.types import NumpyArray
+
+T = TypeVar("T")
 
 
-def iter_batch(iterable: Union[Iterable, Generator], size: int) -> Iterable:
+def normalize(input_array: NumpyArray, p: int = 2, dim: int = 1, eps: float = 1e-12) -> NumpyArray:
+    # Calculate the Lp norm along the specified dimension
+    norm = np.linalg.norm(input_array, ord=p, axis=dim, keepdims=True)
+    norm = np.maximum(norm, eps)  # Avoid division by zero
+    normalized_array = input_array / norm
+    return normalized_array
+
+
+def iter_batch(iterable: Iterable[T], size: int) -> Iterable[list[T]]:
     """
     >>> list(iter_batch([1,2,3,4,5], 3))
     [[1, 2, 3], [4, 5]]
@@ -27,7 +44,16 @@ def define_cache_dir(cache_dir: Optional[str] = None) -> Path:
         cache_path = Path(os.getenv("FASTEMBED_CACHE_PATH", default_cache_dir))
     else:
         cache_path = Path(cache_dir)
-
     cache_path.mkdir(parents=True, exist_ok=True)
 
     return cache_path
+
+
+def get_all_punctuation() -> set[str]:
+    return set(
+        chr(i) for i in range(sys.maxunicode) if unicodedata.category(chr(i)).startswith("P")
+    )
+
+
+def remove_non_alphanumeric(text: str) -> str:
+    return re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
